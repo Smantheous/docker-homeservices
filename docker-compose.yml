@@ -1,0 +1,189 @@
+version: "3"
+
+#USE FOLLOWING ORDER
+# container_name
+# image
+# restart
+# cap_add
+# command
+# depends_on
+# devices
+# environment
+# labels
+# logging
+# networks
+# network_mode
+# ports
+# sysctls
+# volumes
+
+services:
+    traefik:
+        container_name: traefik
+        image: traefik:v2.0
+        restart: always
+        command:
+            - --api.insecure=true
+            - --api.dashboard=true
+            - --api.debug=true
+            - --log.level=DEBUG
+            - --providers.docker=true
+            - --providers.docker.exposedbydefault=false
+            - --providers.file.filename=/dynamic.yaml
+            - --providers.docker.network=web
+            - --entrypoints.web.address=:80
+        labels:
+            - "traefik.http.routers.api.service=api@internal"
+        networks:
+            - web
+        ports:
+            - "80:80"
+            - "8080:8080"
+            - "443:443"
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - ${LOCAL_STORAGE}/traefik/dynamic.yaml:/dynamic.yaml
+
+    website1:
+        container_name: website1-${DOMAIN_NAME}
+        image: nginx
+        restart: always
+        depends_on: 
+            - traefik
+        labels:
+            - traefik.enable=true
+            - traefik.http.routers.website1.rule=Host(`${DOMAIN_NAME}`, `www.${DOMAIN_NAME}`)
+            - traefik.http.routers.website1.entrypoints=web
+        networks:
+            - web
+        volumes:
+            - ${LOCAL_STORAGE}/website1/templates:/etc/nginx/templates
+            - ${LOCAL_STORAGE}/website1/html:/usr/share/nginx/html:ro
+
+    jackett:
+        container_name: jackett
+        image: linuxserver/jackett
+        restart: always
+        environment:
+            - PUID=${PUID}
+            - PGID=${PGID}
+            - TZ=${TZ}
+        ports:
+            - "9117:9117"
+        volumes:
+            - ${LOCAL_STORAGE}/jackett/config:/config
+            - ${LOCAL_STORAGE}/jackett/downloads:/downloads
+    
+    plex:
+        container_name: plex
+        image: plexinc/pms-docker
+        restart: always
+        environment:
+            - TZ=${TZ}
+            - PLEX_CLAIM=${PLEX_CLAIM}
+        network_mode: host
+        volumes:
+            - ${LOCAL_STORAGE}/plex/config:/config
+            - ${LOCAL_STORAGE}/plex/transcode:/transcode
+            - ${PLEX_MEDIA_LOCATION}:/data
+            - ${DREW_PHOTO_LOCATION}:/data/drewphoto
+            - ${FAMILY_PHOTO_LOCATION}:/data/familyphotos
+            - ${HOME_VIDEO_LOCATION}:/data/homevideo
+
+    radarr:
+        container_name: radarr
+        image: linuxserver/radarr
+        restart: always
+        environment:
+            - PUID=${PUID}
+            - PGID=${PGID}
+            - TZ=${TZ}
+        ports:
+            - "7878:7878"
+        volumes:
+            - ${LOCAL_STORAGE}/radarr/config:/config
+            - ${PLEX_MEDIA_LOCATION}:/movies
+            - ${LOCAL_STORAGE}/radarr/downloads:/downloads
+
+    sonarr:
+        container_name: sonarr
+        image: linuxserver/sonarr
+        restart: always
+        environment:
+            - PUID=${PUID}
+            - PGID=${PGID}
+            - TZ=${TZ}
+        ports:
+            - "8989:8989"
+        volumes:
+            - ${LOCAL_STORAGE}/sonarr/config:/config
+            - ${PLEX_MEDIA_LOCATION}:/tv
+            - ${LOCAL_STORAGE}/sonarr/downloads:/downloads
+
+    transmission-openvpn:
+        image: haugene/transmission-openvpn
+        container_name: haugene
+        restart: always
+        cap_add:
+            - NET_ADMIN
+        environment:
+            - CREATE_TUN_DEVICE=true
+            - OPENVPN_PROVIDER=${VPN_PROVIDER}
+            - OPENVPN_CONFIG=${VPN_LOCATION}
+            - OPENVPN_USERNAME=${VPN_USERNAME}
+            - OPENVPN_PASSWORD=${VPN_PASSWORD}
+            - WEBPROXY_ENABLED=false
+            - LOCAL_NETWORK=10.0.0.0/8
+            - TRANSMISSION_RPC_AUTHENTICATION_REQUIRED=true
+            - TRANSMISSION_RPC_USERNAME=${RPC_USERNAME}
+            - TRANSMISSION_RPC_PASSWORD=${RPC_PASSWORD}
+            - TRANSMISSION_ALT_SPEED_DOWN=100000
+            - TRANSMISSION_ALT_SPEED_ENABLED=true
+            - TRANSMISSION_ALT_SPEED_TIME_BEGIN=480
+            - TRANSMISSION_ALT_SPEED_TIME_DAY=127
+            - TRANSMISSION_ALT_SPEED_TIME_ENABLED=true
+            - TRANSMISSION_ALT_SPEED_TIME_END=1380
+            - TRANSMISSION_ALT_SPEED_UP=200
+        logging:
+            driver: json-file
+            options:
+                max-size: 10m
+        ports:
+            - '9091:9091'
+        sysctls:
+            - net.ipv6.conf.all.disable_ipv6=0
+            - net.ipv6.conf.default.disable_ipv6=0
+            - net.ipv6.conf.lo.disable_ipv6=0
+        volumes:
+            - ${LOCAL_STORAGE}/haugene/data:/data
+            - ${PLEX_MEDIA_LOCATION}:/data/completed
+            - '/etc/localtime:/etc/localtime:ro'
+        
+
+    wireguard-server:
+        image: linuxserver/wireguard
+        container_name: wireguard-server
+        restart: always
+        cap_add:
+            - NET_ADMIN
+            - SYS_MODULE
+        environment:
+            - PUID=${PUID}
+            - PGID=${PGID}
+            - TZ=${TZ}
+            - SERVERURL=${SERVER_IP} #optional
+            - SERVERPORT=${WIREGUARD_PORT} #optional
+            - PEERS=2 #optional
+            - PEERDNS=auto #optional
+            - INTERNAL_SUBNET=10.13.13.0 #optional
+        ports:
+            - 51820:51820/udp
+        sysctls:
+            - net.ipv4.conf.all.src_valid_mark=1
+        volumes:
+            - ${LOCAL_STORAGE}/wireguard-server/config:/config
+            - /lib/modules:/lib/modules  
+
+networks:
+    web:
+        external: true
